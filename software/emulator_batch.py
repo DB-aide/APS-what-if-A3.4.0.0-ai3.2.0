@@ -4,6 +4,9 @@ import glob
 import json
 import time
 from datetime import datetime, timedelta
+from typing import Any
+from pathlib import Path
+import argparse
 
 from emulator_core import parameters_known
 from emulator_core import set_tty
@@ -138,38 +141,40 @@ how_to_print = 'print'
 set_tty(0,        0,    how_to_print)            # export print settings to main routine
 
 global echo_msg
+droid = None  # Initialize droid variable for type checking
 
 # try whether we are on Android:
 IsAndroid = False
+fn = ""
 test_file = 'AndroidAPS.log'
 
-test_dir14= '/storage/emulated/0/Documents/aapsLogs/'
-inh14     = glob.glob(test_dir14+'*')            # for Android11+ using AAPS 3.3+
-if len(inh14) > 0:
-    IsAndroid = True
+test_dir14 = Path('/storage/emulated/0/Documents/aapsLogs')     # for Android11+ using AAPS 3.3+
+IsAndroid = test_dir14.is_dir()
+
+if IsAndroid:
     vdf_dir = test_dir14
-    fn = vdf_dir + test_file
-    print('gefunden:', fn)
+    fn = vdf_dir / test_file
+    print('gefunden:', fn)    
     
-test_dir10= '/storage/emulated/0/Android/data/info.nightscout.androidaps/files/'    # always find it even when starting new logfile
-inh10     = glob.glob(test_dir10+'*')            # for Android10 or less using AAPS 2.8.2
-if not IsAndroid and len(inh10) > 0:
-    IsAndroid = True
+test_dir10= Path('/storage/emulated/0/Android/data/info.nightscout.androidaps/files/')    # always find it even when starting new logfile
+IsAndroid = test_dir10.is_dir()      # for Android10 or less using AAPS 2.8.2
+           
+if IsAndroid:
     vdf_dir = test_dir10
-    fn = vdf_dir + test_file
+    fn = vdf_dir / test_file
     print('gefunden:', fn)
 
-test_dir11= '/storage/emulated/0/AAPS/logs/info.nightscout.androidaps/'
-inh11     = glob.glob(test_dir11+'*')            # for Android11+ using AAPS 3.0+
-if not IsAndroid and len(inh11) > 0:
-    IsAndroid = True
+test_dir11= Path('/storage/emulated/0/AAPS/logs/info.nightscout.androidaps/')
+IsAndroid = test_dir11.is_dir() # for Android11+ using AAPS 3.0+
+
+if IsAndroid:
     vdf_dir = test_dir11
-    fn = vdf_dir + test_file
+    fn = vdf_dir / test_file
     print('gefunden:', fn)
     
-if IsAndroid :
+if IsAndroid:
     import androidhelper
-    droid=androidhelper.Android()
+    droid: Any = androidhelper.Android()
     #t from androidhelper import Android
     #t droid = Android()
     #from  subprocess import call
@@ -227,18 +232,23 @@ if IsAndroid :
     ###########################################################################
     #   the  variant definition file dialog
     ###########################################################################
-    btns  = {"N":"Next", "E":"Exit"}
+    # New Code per 01-02-2026 Dries
+    btns  = {"N": "Next", "E": "Exit"}
     items = {}
-    varD = glob.glob(vdf_dir+'/*.dat')                     # outdated naming
+
+    vdf_path = Path(vdf_dir)
     fcount = 1
-    for varFile in varD:
-        items[str(fcount)] = os.path.basename(varFile)      # do not overwrite the calling arg value
-        fcount += 1
-    varF = glob.glob(vdf_dir+'/*.vdf')                     # preferred new naming
-    #print('suche in :', varF)
-    for varFile in varF:
-        items[str(fcount)] = os.path.basename(varFile)      # do not overwrite the calling arg value
-        fcount += 1
+
+    for ext in ('*.dat', '*.vdf'):
+        for varFile in vdf_path.glob(ext):      # for varFile in sorted(vdf_path.glob(ext)): If you want a fixed order. Dries
+            items[str(fcount)] = varFile.name
+            fcount += 1
+
+    if not items:
+        print('\nWARNING: no data files found')
+        input('\npress ENTER')
+        sys.exit()
+
     pick = "1"
     pressed_button = "N"
     while True:
@@ -247,34 +257,37 @@ if IsAndroid :
         if done and pressed_button == "N":         break                           # NEXT
         elif        pressed_button == "E":         sys.exit()                      # EXIT
         #lif        pressed_button == "S":         #t droid.ttsSpeak(items[pick])     # SHOW
-
-    #if pressed_button != 0 or selected_items_indexes == []:
-    #    sys.exit()    
-    varFile = vdf_dir+items[pick]
     
+    varFile = str(vdf_path / items[pick])
 
     ###########################################################################
     #   the config file  dialog
     ###########################################################################
-    btns  = {"N":"Next", "E":"Exit"}
+    btns  = {"N": "Next", "E": "Exit"}
     items = {}
-    my_decimal = '.'
-    cfgF = glob.glob(vdf_dir+'/*.config')
-    fcount = 1
-    for cfgFile in cfgF:
-        items[str(fcount)] = os.path.basename(cfgFile)
-        fcount += 1
-    if fcount == 1:
+
+    cfgF = list(Path(vdf_dir).glob('*.config')) # you can walk through it multiple times, if desired. And no more OS-dependent path logic. Dries
+
+    if not cfgF:
         print('\nWARNING: config file is missing\nin logfile folder\nget config file and restart app')
-        ans = input('\npress ENTER')
+        input('\npress ENTER')
         sys.exit()
+
+    for idx, cfgFile in enumerate(cfgF, start=1):
+        items[str(idx)] = cfgFile.name
+
     pick = "1"
     pressed_button = "N"
+
     while True:
-        pressed_button, pick, done = dialog1('config-files', btns, pressed_button, items, pick)
-        #pick = selected_items_indexes[0]
-        if done and pressed_button == "N":         break                           # NEXT
-        elif        pressed_button == "E":         sys.exit()                      # EXIT
+        pressed_button, pick, done = dialog1(
+            'config-files', btns, pressed_button, items, pick
+        )
+
+        if done and pressed_button == "N":  # NEXT
+            break
+        elif pressed_button == "E":
+            sys.exit()                      # EXIT
         #lif        pressed_button == "S":         #t droid.ttsSpeak(items[pick])     # SHOW
 
     #fnam= varLabel + '.dat'
@@ -325,7 +338,8 @@ if IsAndroid :
     items = ["bg", "target", "iob", "cob", "range", "bestslope", "autosens", "acce_ISF", "bg_ISF", "pp_ISF", "delta_ISF", "dura_ISF", "ISFs", "insReq", "SMB", "basal"]
     width = [9,     6,        6,      6,      13,      13,             6,         6,        6,         6,         6,           6,       20,      13,      11,     12  ]
     pick  = [0,               2,                                       6,         7,        8,         9 ,                    10,       11,      12,      13,     14  ]
-    while not True:
+    # while not True: Code is not analyzed because condition is statically evaluated as false!
+    while True: # That's why I removed the not. Please check if this is correct. Dries
         default_pick = pick
         pressed_button, selected_items_indexes = mydialog("Pick outputs", btns, items, True, default_pick)
         pick = selected_items_indexes
@@ -334,7 +348,7 @@ if IsAndroid :
         elif pressed_button == 0:           break                           # NEXT
         elif pressed_button == 1:           sys.exit()                      # EXIT
         elif pressed_button == 2:                                           # TEST
-            cols = 9                                                        # always: time column
+            cols: int = 9                                                   # always: time column
             for i in selected_items_indexes:
                 cols += width[i]                                            # add selected column width
             droid.ttsSpeak(str(cols))                                       # tell the sum
@@ -365,7 +379,7 @@ if IsAndroid :
     ###########################################################################            
     t_stoppLabel = '2099-00-00T00:00:00Z'           # defaults to end of centuary, i.e. open end
     t_startLabel = '2000-00-00T00:00:00Z'           # defaults to start of centuary, i.e. open start
-else:                                                                               # we are not on Android
+else:                                               # we are not on Android
     #IsAndroid = False
     #Settings for development on Windows with SMB events:
     #test_dir  = 'L:\PID\ISF\Android/'
@@ -373,12 +387,19 @@ else:                                                                           
     #fn = test_dir + test_file
     #ClearScreenCommand = 'cls'                     # done in --core.py
     #maxItem = '144'    # shows all
+    
+    """"
+    Comments from Dries:
+        Unsafe sys.argv[n] May be null!
+        String-append spaghetti could be much cleaner.
+    """
+    if len(sys.argv) < 4:
+        print("Usage: script <logfiles> <options> <variant> [start] [stop] [bg]")
+        sys.exit(1)
 
-    varyHome= sys.argv[0]                           # command used to start this script
-    whereColon = varyHome.find(':')
-    if whereColon < 0:
-        varyHome = os.getcwd()
-    varyHome = os.path.dirname(varyHome) + os.sep   #'\\'
+    # Platform independent
+    varyHome = str(Path(sys.argv[0]).resolve().parent) + os.sep # command used to start this script. 
+    
     m  = '='*66+'\nEcho of software versions used\n'+'-'*66
     m += '\n emulator home directory       ' + varyHome
     #global echo_msg
@@ -392,13 +413,15 @@ else:                                                                           
     m += '\nLogfiles to scan      ' + sys.argv[1]
     m += '\nOutput options        ' + sys.argv[2]
     m_default = ''
-    if sys.argv[2].find('.') >= 0 :
+    
+    if '.' in sys.argv[2]:
         my_decimal = '.'
-    elif sys.argv[2].find(',') >= 0 :
-        my_decimal = ',' 
+    elif ',' in sys.argv[2]:
+        my_decimal = ','
     else:
         my_decimal = ','
-        m_default = ' (default)'                   # the default
+        m_default = ' (default)'
+
     m += '\nDecimal symbol        ' + my_decimal + m_default
     myseek  = sys.argv[1] #+ '\\'
     arg2    = 'Windows/' + sys.argv[2]              # the feature list of what to plot
