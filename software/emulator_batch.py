@@ -26,7 +26,7 @@ if sys.platform == "linux":
 
     print("PYTHONUTF8=1 added to ~/.bashrc")
 
-DEBUG = True
+DEBUG = False
 
 if DEBUG:
     try:
