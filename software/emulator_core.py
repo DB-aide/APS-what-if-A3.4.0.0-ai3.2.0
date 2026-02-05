@@ -17,7 +17,7 @@ import  copy
 import  re
 import os
 import json
-
+from pathlib import Path
 import determine_basal as detSMB
 from determine_basal import my_ce_file 
 
@@ -904,7 +904,7 @@ def TreatLoop(Curly, log, lcount, fn):
         if maxBol== '' :    maxBol= '0'
         origSMB.append(eval(mySMB))
         origMaxBolus.append(eval(maxBol))
-        log.write('\n========== loop in row ' + str(lcount) + ' ========== of logfile '+fn+'\n')
+        log.write('\n========== loop in row ' + str(lcount) + ' ========== of logfile '+ str(fn) +'\n')
         log.write('  created at= ' + stmp + '\n')
         log.write(SMBreason['script'])                              # the script debug section
         #printVal(suggest, 'bg', log)
@@ -947,8 +947,8 @@ def TreatLoop(Curly, log, lcount, fn):
         lastBasal.append(currenttemp['rate'])
         
         log = open(ce_file, 'a')
-        #og.write('\n========== '+varLabel+' loop in row ' + str(lcount) +' ========== of logfile '+fn+'\n')
-        log.write('\n========== loop in row ' + str(lcount) +' ========== of logfile '+fn+'\n')
+        #og.write('\n========== '+varLabel+' loop in row ' + str(lcount) +' ========== of logfile '+ str(fn) +'\n')
+        log.write('\n========== loop in row ' + str(lcount) +' ========== of logfile '+ str(fn) +'\n')
         log.write('  created at= ' + stmp +'\n')
         log.write('---------- Script Debug --------------------\n')
         log.close()
@@ -957,7 +957,7 @@ def TreatLoop(Curly, log, lcount, fn):
         tempBasalFunctionsDummy = ''                    # is handled inside determine_basal as import
         origInsReq.append(ins_Req)
         origISF.append(SMBreason['origISF'])
-        varlog.write('\nloop execution in row='+str(lcount)+' of logfile '+fn+' at= ' + stmp + '\n')
+        varlog.write('\nloop execution in row='+str(lcount)+' of logfile '+ str(fn) +' at= ' + stmp + '\n')
         #longDelta.append(round(glucose_status['long_avgdelta'],2))
         if 'dura_ISF_minutes' not in glucose_status:        # calculate it in emulator
             delta05, avg05 = getHistBG(len(bg)-1, 0.05)
@@ -1012,8 +1012,9 @@ def TreatLoop(Curly, log, lcount, fn):
         if isAndroid:
             msgFile = 'Scanning active logfile'
         else:
-            msgFile = 'Scanning logfile '+fn       
-        log_msg(msgFile + ',  loop time stamp '+stmp,'\r')
+            msgFile = 'Scanning logfile ' + fn.as_posix()
+
+        log_msg(f"{msgFile},  loop time stamp {stmp}", '\r')
         reT = detSMB.determine_basal(glucose_status, currenttemp, iob_data, profile, autosens_data, meal_data, tempBasalFunctionsDummy, MicroBolusAllowed, reservoir, thisTime, Fcasts, Flows, emulAI_ratio)
         #newLoop = False
         if len(origAI_ratio)<len(emulAI_ratio):
@@ -1323,7 +1324,7 @@ def getCalibrationJson(Curly, lcount):
     global calibrationJson
     #print(fn, fn[-4:], str(lcount))
     #print('calibration json input='+Curly)
-    if fn[-4:] != '.zip':       Curly = Curly[:-1]      # for non-zipped file 
+    if fn.suffix != '.zip':       Curly = Curly[:-1]      # for non-zipped file 
     #print('calibration json input='+Curly)
     if Curly[-1:] != '}':       Curly += '}'            # incomplete during 7.Jun.2925
     cal_json = json.loads(Curly)
@@ -1576,9 +1577,9 @@ def scanLogfile(fn, entries):
         log     = open(fn_first + '.orig.txt', 'w')
         varlog  = open(fn_first + '.' + varLabel + '.log', 'w')
         varlog.write(echo_msg)
-    varlog.write('\n========== Echo of what-if definitions actioned for variant '+varLabel+'\n========== created on '+formatdate(localtime=True) + '\n========== for loop events found in logfile '+fn+'\n')
+    varlog.write('\n========== Echo of what-if definitions actioned for variant '+varLabel+'\n========== created on '+formatdate(localtime=True) + '\n========== for loop events found in logfile '+ str(fn) +'\n')
     log.write('AAPS scan from AAPS Logfile for SMB comparison created on ' + formatdate(localtime=True) + '\n')
-    log.write('FILE='+fn + '\n')
+    log.write('FILE='+ str(fn) + '\n')
     global lcount
     #isZip = True    # testwise fix
     lcount  = 0
@@ -2196,7 +2197,7 @@ def XYplots(loopCount, head1, head2, entries) :
                 fig = plt.figure(constrained_layout=True, figsize=(2.2*max(6,maxPlots), 11))# w, h paper size in inches; double width if no flowchart
                 gs  = fig.add_gridspec(1,maxPlots)                                          # 1 horizontal; 1+2+6 vertical strips
                 fig.set_constrained_layout_pads(w_pad=0., h_pad=0., hspace=0., wspace=0.)   # space to edge and between frames
-                fig.suptitle('\nCompare original "' + fn + '" vs emulation case "' + varLabel + '"\n', weight='bold')    # incl. <CR> for space below Header
+                fig.suptitle('\nCompare original "' + fn.as_posix() + '" vs emulation case "' + varLabel + '"\n', weight='bold')    # incl. <CR> for space below Header
                 if frameIns :                                                               # anything related to insulin
                     axin = fig.add_subplot(gs[0,0])                                         # 1 strip wide
                     axin.xaxis.label.set_color('blue')
@@ -2668,7 +2669,7 @@ def parameters_known(myseek, arg2, variantFile, startLabel, stoppLabel, entries,
         return  60, 'Z', 0, '', '', 0, '', oldPauseCarbsReqEnds               # prescan to get parabola fit length
 
     #log_msg('inside all_parameters_known -->\nvarFile='+varFile+'\nvarLabel='+varLabel)#   
-    logListe = glob.glob(myseek+myfile, recursive=False)
+    logListe = glob.glob(str(myseek) + myfile, recursive=False)
     #print ('logListe:', str(logListe))
     if arg2[:7] == 'Android' :
         isAndroid = True
@@ -2739,13 +2740,14 @@ def parameters_known(myseek, arg2, variantFile, startLabel, stoppLabel, entries,
 
     filecount = 0
     wd = os.path.dirname(varFile)
-    if isAndroid:       wd = wd + '/'
-    elif wd !='':       wd = wd + '/'               # needed for GUI method
+    if isAndroid:       wd = wd + os.sep
+    elif wd !='':       wd = wd + os.sep               # needed for GUI method
     #if wd == '':        wd = os.getcwd()
     for ps in sorted(sorted_fn):
-        fn = sorted_fn[ps]
-        #print('Try file ['+fn+'] in folder ['+wd+'] of ['+varFile+']')
-        ftype = fn[len(fn)-3:]
+        # fn = sorted_fn[ps]
+        fn = Path(sorted_fn[ps])
+        #print('Try file ['+ str(fn) +'] in folder ['+wd+'] of ['+varFile+']')
+        ftype = fn.suffix.lstrip('.')
         useFile = False
         if isAndroid and ftype=='log':                                                  useFile = True
         elif not isAndroid and (ftype=='zip' or ftype=='log' or ftype.find('.')>0) :    useFile = True      # valid logfiles should end with "_.0" thru "_.99" or "zip"
@@ -2763,7 +2765,7 @@ def parameters_known(myseek, arg2, variantFile, startLabel, stoppLabel, entries,
                 ce_file = wd + fnLabel + '.' + varLabel + '.txt'
                 cel = open(ce_file, 'w')
                 cel.write('AAPS scan from ' + varLabel + ' for SMB comparison created on ' + formatdate(localtime=True) + '\n')
-                cel.write('FILE='+fn + '\n')
+                cel.write('FILE='+ str(fn) + '\n')
                 cel.close()
                 my_ce_file(ce_file)                 # exports name to determine_basal.py
                 fn_first = wd + fnLabel
@@ -2788,11 +2790,11 @@ def parameters_known(myseek, arg2, variantFile, startLabel, stoppLabel, entries,
                 break                                   # end of time window reached
     
     if filecount == 0 :
-        log_msg ('no such logfile: "'+myseek+'"')
+        log_msg ('no such logfile: "'+ str(myseek) +'"')
         return 0, 'Z', 0, '', '', 0, '', oldPauseCarbsReqEnds
     loopCount = len(loop_mills)
     if loopCount == 0 :
-        log_msg ('\nno entries found in logfile: "'+myseek+'"')
+        log_msg ('\nno entries found in logfile: "'+ str(myseek) +'"')
         #return     #sys.exit()
     log.write('END\n')
     log.close()

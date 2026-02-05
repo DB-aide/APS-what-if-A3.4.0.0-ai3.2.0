@@ -1,24 +1,21 @@
-import sys
 import os
 import glob
+import sys
 import json
 import time
-from datetime import datetime, timedelta
+import subprocess
+import shutil
+from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 from typing import Any
 from pathlib import Path
-import argparse
-
 from emulator_core import parameters_known
 from emulator_core import set_tty
-
 from emulator_core import get_version_core
-from determine_basal    import get_version_determine_basal
+from determine_basal import get_version_determine_basal
 
-def get_version_batch(echo_msg):
-    echo_msg['emulator_batch.py'] = '2025-12-28 16:30'      # pause in announcing carbs required
-    #cho_msg['emulator_batch.py'] = '2025-05-27 14:00'      # fit table output for Qpython+; adapt VDF home
-    #cho_msg['emulator_batch.py'] = '2025-04-09 03:18'      # Logdir geändert
-    return echo_msg
+# Detect if running in Termux environment
+use_termux = os.environ.get('PREFIX', '').endswith('/data/data/com.termux/files/usr')
 
 if sys.platform == "linux":
     bashrc = os.path.expanduser("~/.bashrc")
@@ -27,32 +24,211 @@ if sys.platform == "linux":
     with open(bashrc, "a") as f:
         f.write("\n" + line)
 
-    print("PYTHONUTF8=1 toegevoegd aan ~/.bashrc")
+    print("PYTHONUTF8=1 added to ~/.bashrc")
 
-def mydialog(title,buttons=["OK"],items=[],multi=False,default_pick=[0,1]):
-    # adapted from "https://stackoverflow.com/questions/51874555/qpython3-and-androidhelper-droid-dialogsetsinglechoiceitems"
-    title = str(title)
-    droid.dialogCreateAlert(title)
-    if len(items) > 0:
-        if multi:
-            droid.dialogSetMultiChoiceItems(items, default_pick)   # incl. list of defaults
+DEBUG = True
+
+if DEBUG:
+    try:
+        import debugpy
+    except Exception as e:
+        print(f"Debugpy is not installed!\n Install it with this command:\n pip install debugpy\n {e}")
+
+    HOST = "0.0.0.0"
+    PORT = 5678
+    debugpy.listen((HOST, PORT))
+    print("Waiting for VS Code debugger...")
+    debugpy.wait_for_client()
+    print("Debugger attached")
+
+class DummyDroid:
+    def dialogCreateAlert(self, title):
+        print(f"\n=== {title} ===")
+
+    def dialogSetMultiChoiceItems(self, items, default):
+        print("Choices (multi):")
+        for i, it in enumerate(items):
+            mark = "*" if i in default else " "
+            print(f" [{mark}] {i}: {it}")
+
+    def dialogSetSingleChoiceItems(self, items, default):
+        print("Choices:")
+        for i, it in enumerate(items):
+            mark = "*" if i == default else " "
+            print(f" [{mark}] {i}: {it}")
+
+    def dialogSetPositiveButtonText(self, text): pass
+    def dialogSetNegativeButtonText(self, text): pass
+    def dialogSetNeutralButtonText(self, text): pass
+    def dialogShow(self): pass
+
+    def dialogGetResponse(self):
+        return type("R", (), {"result": {"which": "positive"}})()
+
+    def dialogGetSelectedItems(self):
+        return type("R", (), {"result": []})()
+
+    def dialogDismiss(self): pass
+
+    def ttsSpeak(self, text):
+        print(f"[TTS] {text}")
+
+class DummyDroid:
+    def toast(self, msg):
+        print(f"[ANDROID TOAST] {msg}")
+
+    def dialogCreateAlert(self, *args, **kwargs):
+        print("[ANDROID DIALOG]", args)
+
+    def dialogShow(self):
+        pass
+
+try:
+    import androidhelper
+    droid = androidhelper.Android()
+    ANDROID_UI = True
+except ImportError:
+    droid = DummyDroid()
+    ANDROID_UI = False
+
+def get_display_timezone():
+    tz = os.environ.get("TZ") # Termux
+    if tz:
+        return ZoneInfo(tz)
+    return datetime.now().astimezone().tzinfo
+
+def speak(text):
+    try:
+        if IsAndroid and use_termux:
+            subprocess.run(
+                ["termux-tts-speak", text],
+                check=True,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+        elif droid:
+            droid.ttsSpeak(text)
         else:
-            droid.dialogSetSingleChoiceItems(items, default_pick[0])
-    if len(buttons) >= 1:
-        droid.dialogSetPositiveButtonText(buttons[0])
-    if len(buttons) >= 2:
-        droid.dialogSetNegativeButtonText(buttons[1])
-    if len(buttons) == 3:
-        droid.dialogSetNeutralButtonText(buttons[2])
-    droid.dialogShow()
-    res0 = droid.dialogGetResponse().result
-    res = droid.dialogGetSelectedItems().result
-    if "which" in res0.keys():
-        res0={"positive":0,"neutral":2,"negative":1}[res0["which"]]
-    else:
-        res0=-1
-    droid.dialogDismiss()                       # important for Android12
-    return res0,res
+            raise RuntimeError("No TTS available")
+    except Exception as e:
+        print("[SAY]", text)
+        print(f"[speak-fallback] {e}")
+
+def get_version_batch(echo_msg):
+    echo_msg['emulator_batch.py'] = '2025-12-28 16:30'      # pause in announcing carbs required
+    #cho_msg['emulator_batch.py'] = '2025-05-27 14:00'      # fit table output for Qpython+; adapt VDF home
+    #cho_msg['emulator_batch.py'] = '2025-04-09 03:18'      # Logdir geändert
+    return echo_msg
+
+def mydialog(title, buttons=None, items=None, multi=False, default_pick=None):
+    """
+    buttons: list[str]        e.g. ["OK", "Cancel", "Extra"]
+    items:   list[str] | None
+    multi:   bool             multi-choice dialog
+    default_pick: list[int]   default selected items
+    """
+
+    buttons = buttons or []
+    items = items or []
+    default_pick = default_pick or []
+
+    # ----------------------------
+    # Android UI pad
+    # ----------------------------
+    if droid is not None and hasattr(droid, "dialogCreateAlert"):
+        try:
+            droid.dialogCreateAlert(title)
+
+            if items:
+                if multi:
+                    droid.dialogSetMultiChoiceItems(items, default_pick)
+                else:
+                    droid.dialogSetSingleChoiceItems(items, default_pick[0] if default_pick else 0)
+
+            if len(buttons) >= 1:
+                droid.dialogSetPositiveButtonText(buttons[0])
+            if len(buttons) >= 2:
+                droid.dialogSetNegativeButtonText(buttons[1])
+            if len(buttons) >= 3:
+                droid.dialogSetNeutralButtonText(buttons[2])
+
+            droid.dialogShow()
+
+            res_btn = droid.dialogGetResponse().result or {}
+            res_sel = droid.dialogGetSelectedItems().result or []
+
+            pressed = {
+                "positive": 0,
+                "negative": 1,
+                "neutral": 2
+            }.get(res_btn.get("which"), -1)
+
+            droid.dialogDismiss()  # Android 12+ vereist
+
+            return pressed, res_sel
+
+        except Exception as e:
+            print("[ANDROID UI ERROR]", e)
+
+        # ----------------------------
+        # Fallback: CLI / Termux
+        # ----------------------------
+        print("\n" + title)
+        print("-" * len(title))
+
+        for i, item in enumerate(items):
+            mark = "*" if i in default_pick else " "
+            print(f"[{mark}] {i}: {item}")
+
+        if items:
+            if multi:
+                inp = input("Select items (comma separated, empty = default)): ").strip()
+                if inp:
+                    try:
+                        picks = [int(x) for x in inp.split(",")]
+                    except ValueError:
+                        picks = default_pick
+                else:
+                    picks = default_pick
+            else:
+                inp = input("Select item number (empty = default):").strip()
+                picks = [int(inp)] if inp.isdigit() else default_pick
+        else:
+            picks = []
+
+        if buttons:
+            print("\nButtons:")
+            for i, b in enumerate(buttons):
+                print(f"{i}: {b}")
+            inp = input("Select button (empty = 0):").strip()
+            pressed = int(inp) if inp.isdigit() else 0
+        else:
+            pressed = -1
+
+        return pressed, picks
+
+# ======================================================
+# CLI / TERMUX (no Android UI)
+# ======================================================
+    print("\n" + "=" * 60)
+    print(title)
+    print("=" * 60)
+
+    if items:
+        for i, it in enumerate(items):
+            mark = "*" if i in default_pick else " "
+            print(f" [{mark}] {i}: {it}")
+
+    print(f"Buttons : {buttons}")
+    print(f"Defaults: {default_pick}")
+    print("(CLI mode → defaults are used automatically)")
+
+    # behavioral equivalent:
+    pressed_button = 0 if buttons else -1
+    selected_items = default_pick if multi else [default_pick[0]]
+
+    return pressed_button, selected_items
+
 
 def dialog1(Title, btns, default_btn, items, default_item):
     while True:
@@ -86,31 +262,41 @@ def dialog1(Title, btns, default_btn, items, default_item):
             pass
 
 
-def waitNextLoop(loopInterval, arg,varName):    # arg = hh:mm:ss of last loop execution, optionally appended 'Z'
-    #E started 05.Nov.2019
-    if arg == 'Z':                              # no entry found for SMB loop
-        waitSec = loopInterval + 5              # this shoud include at leat 1 loop
+def waitNextLoop(loopInterval, arg, varName):
+    DISPLAY_TZ = datetime.now().astimezone().tzinfo
+
+    # ---- UTC calculation ----
+    if arg == 'Z':
+        waitSec = loopInterval + 5
     else:
-        loophh = eval('1'+arg[0:2]) - 100       # handle leading '0'
-        loopmm = eval('1'+arg[3:5]) - 100       # handle leading '0'
-        loopss = eval('1'+arg[6:8]) - 100       # handle leading '0'
-        LoopSec= loophh*3600 + loopmm*60 + loopss
-        now = time.gmtime()
-        now_hh = now[3]                         # tm_hour
-        now_mm = now[4]                         # tm_min
-        now_ss = now[5]                         # tm_sec
-        if now_hh<loophh:
-            now_hh = 24                         # past midnight
-        nowSec = now_hh*3600 + now_mm*60 + now_ss
-        waitSec = round(LoopSec - nowSec + loopInterval + 5, 0)    # until next loop including 5 secs spare
-        if waitSec<10:
-            #print('inside wait:', str(waitSec))
-            waitSec = 60 + 5                    # was even negative sometimes
-    then = datetime.now() + timedelta(seconds=waitSec-5)
-    thenStr = format(then, '%H:%M:%S')
-    waitSecStr = str(round(waitSec, 0))
-    if waitSecStr[-2:] == '.0':     waitSecStr = waitSecStr[:-2]  # drop trailing ".0"
-    print (' Waiting ' + waitSecStr + ' sec for next loop at '+ thenStr + ';   Variant "' + varName + '"', end='\r')
+        loophh = int(arg[0:2])
+        loopmm = int(arg[3:5])
+        loopss = int(arg[6:8])
+
+        LoopSec = loophh * 3600 + loopmm * 60 + loopss
+
+        now_utc = datetime.now(timezone.utc)
+        nowSec = now_utc.hour * 3600 + now_utc.minute * 60 + now_utc.second
+
+        if nowSec < LoopSec:
+            delta = LoopSec - nowSec
+        else:
+            delta = (24 * 3600 - nowSec) + LoopSec
+
+        waitSec = round(delta + loopInterval + 5, 0)
+        if waitSec < 10:
+            waitSec = 65
+
+    # ---- Display in local time ----
+    then_utc = datetime.now(timezone.utc) + timedelta(seconds=waitSec - 5)
+    then_local = then_utc.astimezone(DISPLAY_TZ)
+
+    print(
+        f' Waiting {int(waitSec)} sec for next loop at '
+        f'{then_local.strftime("%H:%M:%S %Z")};   Variant "{varName}"',
+        end='\r'
+    )
+
     return waitSec
 
 def alarmHours(titel):
@@ -130,6 +316,15 @@ def alarmHours(titel):
         elif pressed_button == 1:           sys.exit()                      # EXIT
     return pick
 
+def sync_android_logs(src: Path, dst: Path):
+    try:
+        dst.mkdir(parents=True, exist_ok=True)
+        for f in src.glob("*"):
+            if f.is_file():
+                shutil.copy2(f, dst / f.name)
+    except PermissionError:
+        # Android freezes → silently fails, mirror remains old
+        pass
 
 ###############################################
 ###    start of main                        ###
@@ -145,44 +340,41 @@ droid = None  # Initialize droid variable for type checking
 
 # try whether we are on Android:
 IsAndroid = False
-fn = ""
+# ANDROID_SOURCE 
+vdf_dir = Path('/storage/emulated/0/Documents/aapsLogs')
+TERMUX_MIRROR  = Path.home() / "external-1/Documenten/aapsLogs"
+fn = None
 test_file = 'AndroidAPS.log'
 
-test_dir14 = Path('/storage/emulated/0/Documents/aapsLogs')     # for Android11+ using AAPS 3.3+
-IsAndroid = test_dir14.is_dir()
+
+                    # AAPS version: 3.3+                        or AAPS 2.8.2                                                        or AAPS 3.0+
+ANDROID_SOURCE = {'/storage/emulated/0/Documents/aapsLogs', '/storage/emulated/0/Android/data/info.nightscout.androidaps/files/', '/storage/emulated/0/AAPS/logs/info.nightscout.androidaps/'}
+
+for ext in (ANDROID_SOURCE):
+        if Path(ext).is_dir():
+            IsAndroid = True
+            vdf_dir = Path(ext)
+            fn = vdf_dir / test_file
+            print(f'Found: {Path(ext)}', fn)
 
 if IsAndroid:
-    vdf_dir = test_dir14
-    fn = vdf_dir / test_file
-    print('gefunden:', fn)    
     
-test_dir10= Path('/storage/emulated/0/Android/data/info.nightscout.androidaps/files/')    # always find it even when starting new logfile
-IsAndroid = test_dir10.is_dir()      # for Android10 or less using AAPS 2.8.2
-           
-if IsAndroid:
-    vdf_dir = test_dir10
-    fn = vdf_dir / test_file
-    print('gefunden:', fn)
+    # try sync first (may fail)
+    # if vdf_dir.exists():
+    #     sync_android_logs(vdf_dir, TERMUX_MIRROR)
 
-test_dir11= Path('/storage/emulated/0/AAPS/logs/info.nightscout.androidaps/')
-IsAndroid = test_dir11.is_dir() # for Android11+ using AAPS 3.0+
-
-if IsAndroid:
-    vdf_dir = test_dir11
-    fn = vdf_dir / test_file
-    print('gefunden:', fn)
+    # # werk ALTIJD met mirror
+    # if TERMUX_MIRROR.is_dir():
+    #     vdf_dir = TERMUX_MIRROR
+    #     fn = vdf_dir / test_file
+    #     print("Using Android mirror:", fn)
+    # else:
+    #     raise RuntimeError("No accessible AAPS log folder found")
     
-if IsAndroid:
-    import androidhelper
-    droid: Any = androidhelper.Android()
-    #t from androidhelper import Android
-    #t droid = Android()
-    #from  subprocess import call
     speed = '150'
     pitch = '33'
+    my_decimal = ','
     #ClearScreenCommand = 'clear'                                           # done in --core.py
-    
-    #inh = glob.glob(test_dir+'files/AndroidAPS.log')
     #fn = inh[0]
     myseek  = fn
 
@@ -200,7 +392,7 @@ if IsAndroid:
         #pick = selected_items_indexes[0]
         if done and pressed_button == "N":     break                           # NEXT
         elif        pressed_button == "E":     sys.exit()                      # EXIT
-        elif        pressed_button == "T":     droid.ttsSpeak(items[pick])     # TEST
+        elif        pressed_button == "T":     speak(items[pick])     # TEST
         #elif        pressed_button == "T":     call(['espeak', '-v', language[pick], '-p',pitch, '-s', speed, items[pick]])     # TEST
         
     if   pick == "1":
@@ -234,31 +426,41 @@ if IsAndroid:
     ###########################################################################
     # New Code per 01-02-2026 Dries
     btns  = {"N": "Next", "E": "Exit"}
-    items = {}
 
     vdf_path = Path(vdf_dir)
+    items = {}
     fcount = 1
 
-    for ext in ('*.dat', '*.vdf'):
-        for varFile in vdf_path.glob(ext):      # for varFile in sorted(vdf_path.glob(ext)): If you want a fixed order. Dries
-            items[str(fcount)] = varFile.name
-            fcount += 1
+    #print(vdf_path.exists())
+    #print(list(vdf_path.iterdir()))
+    try:
+        for varFile in vdf_path.iterdir():
+            if varFile.is_file() and varFile.suffix.lower() in ('.dat', '.vdf'):
+                items[str(fcount)] = varFile.name
+                fcount += 1
+    except PermissionError:
+        print(f'\nWARNING: no *.dat file or *.vdf file found in\n {vdf_path}')
+        print("No permissions for the folder")
+        if use_termux:
+            print("Did you run 'termux-setup-storage'?")
+        sys.exit(1)
 
     if not items:
-        print('\nWARNING: no data files found')
+        print(f'\nWARNING: no *.dat file or *.vdf file found in\n {vdf_path}')
         input('\npress ENTER')
         sys.exit()
 
     pick = "1"
     pressed_button = "N"
+
     while True:
         pressed_button, pick, done = dialog1('vdf-files', btns, pressed_button, items, pick)
         #pick = selected_items_indexes[0]
         if done and pressed_button == "N":         break                           # NEXT
         elif        pressed_button == "E":         sys.exit()                      # EXIT
-        #lif        pressed_button == "S":         #t droid.ttsSpeak(items[pick])     # SHOW
+        #lif        pressed_button == "S":         #t speak(items[pick])     # SHOW
     
-    varFile = str(vdf_path / items[pick])
+    varFile = vdf_path / items[pick]
 
     ###########################################################################
     #   the config file  dialog
@@ -288,10 +490,10 @@ if IsAndroid:
             break
         elif pressed_button == "E":
             sys.exit()                      # EXIT
-        #lif        pressed_button == "S":         #t droid.ttsSpeak(items[pick])     # SHOW
+        #lif        pressed_button == "S":         #t speak(items[pick])     # SHOW
 
     #fnam= varLabel + '.dat'
-    cfg = open(vdf_dir+items[pick], 'r')
+    cfg = open(str(vdf_dir) + os.sep + items[pick], 'r')
     next_row= 'extraCarbs'
     for zeile in cfg:
         key = zeile[:1]
@@ -317,7 +519,7 @@ if IsAndroid:
             pickLessSMB = List
             next_row = 'outputs'
         elif next_row == 'outputs':
-            arg2 = 'Android/'+my_decimal
+            arg2 = 'Android/' + my_decimal
             outputJson = json.loads(zeile)
             #print('vorher :', str(outputJson))
             total_width = 6                         # base time in hh:mmZ
@@ -351,7 +553,7 @@ if IsAndroid:
             cols: int = 9                                                   # always: time column
             for i in selected_items_indexes:
                 cols += width[i]                                            # add selected column width
-            droid.ttsSpeak(str(cols))                                       # tell the sum
+            speak(str(cols))                                       # tell the sum
 
     #arg2 = 'Android/.'+''.join(['/'+items[i] for i in selected_items_indexes])# the feature list what to plot
     #arg2+= '/.'                                                            # always decimal "." on Android
@@ -393,13 +595,14 @@ else:                                               # we are not on Android
         Unsafe sys.argv[n] May be null!
         String-append spaghetti could be much cleaner.
     """
-    if len(sys.argv) < 4:
-        print("Usage: script <logfiles> <options> <variant> [start] [stop] [bg]")
-        sys.exit(1)
+    # if len(sys.argv) < 3:
+    #     print("Usage: script <logfiles> <options> <variant> [start] [stop] [bg]")
+    #     sys.exit(1)
 
     # Platform independent
     varyHome = str(Path(sys.argv[0]).resolve().parent) + os.sep # command used to start this script. 
-    
+    #print (varyHome)
+
     m  = '='*66+'\nEcho of software versions used\n'+'-'*66
     m += '\n emulator home directory       ' + varyHome
     #global echo_msg
@@ -459,7 +662,7 @@ while wdhl[0]=='y':                                                             
     if thisTime == 'UTF8':          break                                           # PATHONUTF8 nor defined or incorrect
     #print('returned vary_ISF_batch:', CarbReqGram, ' minutes:',  CarbReqTime)
     if IsAndroid:
-        thisHour = datetime.now()
+        THISHOUR = datetime.now()
         thisStr  = format(thisHour, '%H')
         if thisStr[0] == '0':       thisStr = thisStr[1]                            # could not EVAL('01', only '1')
         thisInt  = eval(thisStr)
@@ -474,21 +677,21 @@ while wdhl[0]=='y':                                                             
             signif  = valTime / valGram
             if signif<5 and thisTime>lastTime and thisHour>=pauseCarbsReqEnds:      # above threshold of significance
                 #pint(both_ansage, carb_ansage0)
-                droid.ttsSpeak(both_ansage)
-                droid.ttsSpeak(carb_ansage0)
-                droid.ttsSpeak(both_ansage1 + str(valGram) + carb_ansage2 + AlarmTime + carb_ansage3)
+                speak(both_ansage)
+                speak(carb_ansage0)
+                speak(both_ansage1 + str(valGram) + carb_ansage2 + AlarmTime + carb_ansage3)
                 #call(['espeak', '-v',language[languageID], '-p',pitch, '-s',speed, both_ansage])
                 #call(['espeak', '-v',language[languageID], '-p',pitch, '-s',speed, carb_ansage0])
                 #call(['espeak', '-v',language[languageID], '-p',pitch, '-s',speed, both_ansage1 + str(valGram) + carb_ansage2 + AlarmTime + carb_ansage3])
         #print("extra bolus", str(thisInt in pickMoreSMB), str(extraSMB))
         if (thisInt in pickMoreSMB) and extraSMB>0 and thisTime>lastTime:
-            droid.ttsSpeak(textMoreSMB+str(extraSMB)+textUnit)
+            speak(textMoreSMB+str(extraSMB)+textUnit)
             #call(['espeak', '-v',language[languageID], '-p',pitch, '-s',speed, textMoreSMB+str(extraSMB)+textUnit])    # wake up user, also during sleep?
         #print("less  bolus", str(thisInt in pickLessSMB), str(extraSMB))
         if (thisInt in pickLessSMB) and extraSMB<0 and thisTime>lastTime:
-            droid.ttsSpeak(textLessSMB+str(extraSMB)+textUnit)
+            speak(textLessSMB+str(extraSMB)+textUnit)
             #call(['espeak', '-v',language[languageID], '-p',pitch, '-s',speed, textLessSMB+str(extraSMB)+textUnit])    # wake up user, also during sleep?
-        howLong = waitNextLoop(loopInterval, thisTime, varFile[len(vdf_dir):-4])
+        howLong = waitNextLoop(loopInterval, thisTime, varFile.suffix, display_tz = get_display_timezone())
         lastTime = thisTime        
         time.sleep(howLong)
     else:   break                                                                   # on Windows run only once
