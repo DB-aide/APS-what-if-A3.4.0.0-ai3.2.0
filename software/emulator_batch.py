@@ -1,5 +1,4 @@
 import os
-import glob
 import sys
 import json
 import time
@@ -7,7 +6,6 @@ import subprocess
 import shutil
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
-from typing import Any
 from pathlib import Path
 from emulator_core import parameters_known
 from emulator_core import set_tty
@@ -26,18 +24,30 @@ if sys.platform == "linux":
 
     print("PYTHONUTF8=1 added to ~/.bashrc")
 
-DEBUG = False
+DEBUG = True
 
 if DEBUG:
     try:
         import debugpy
     except Exception as e:
         print(f"Debugpy is not installed!\n Install it with this command:\n pip install debugpy\n {e}")
-
+        """"
+            With Debian 13+
+            source venv/bin/activate
+            python -m pip install debugpy
+        """
     HOST = "0.0.0.0"
     PORT = 5678
     debugpy.listen((HOST, PORT))
-    print("Waiting for VS Code debugger...")
+    print("Waiting for VS Code debugger (10s)...")
+
+    for _ in range(100):  # 100 × 0.1s = 10s
+        if debugpy.is_client_connected():
+            print("Debugger attached")
+            break
+        time.sleep(0.1)
+    else:
+        print("No debugger attached, continuing normally")
     debugpy.wait_for_client()
     print("Debugger attached")
 
@@ -269,9 +279,9 @@ def waitNextLoop(loopInterval, arg, varName):
     if arg == 'Z':
         waitSec = loopInterval + 5
     else:
-        loophh = int(arg[0:2])
-        loopmm = int(arg[3:5])
-        loopss = int(arg[6:8])
+        loophh = int(arg[0:2]) -100 # handle leading '0'
+        loopmm = int(arg[3:5]) -100 # handle leading '0'
+        loopss = int(arg[6:8]) -100 # handle leading '0'
 
         LoopSec = loophh * 3600 + loopmm * 60 + loopss
 
@@ -595,9 +605,9 @@ else:                                               # we are not on Android
         Unsafe sys.argv[n] May be null!
         String-append spaghetti could be much cleaner.
     """
-    # if len(sys.argv) < 3:
-    #     print("Usage: script <logfiles> <options> <variant> [start] [stop] [bg]")
-    #     sys.exit(1)
+    if len(sys.argv) < 3:
+        print("Usage: script <logfiles> <options> <variant> [start] [stop] [bg]")
+        sys.exit()
 
     # Platform independent
     varyHome = str(Path(sys.argv[0]).resolve().parent) + os.sep # command used to start this script. 
@@ -662,7 +672,7 @@ while wdhl[0]=='y':                                                             
     if thisTime == 'UTF8':          break                                           # PATHONUTF8 nor defined or incorrect
     #print('returned vary_ISF_batch:', CarbReqGram, ' minutes:',  CarbReqTime)
     if IsAndroid:
-        THISHOUR = datetime.now()
+        thisHour = datetime.now()
         thisStr  = format(thisHour, '%H')
         if thisStr[0] == '0':       thisStr = thisStr[1]                            # could not EVAL('01', only '1')
         thisInt  = eval(thisStr)
@@ -691,7 +701,7 @@ while wdhl[0]=='y':                                                             
         if (thisInt in pickLessSMB) and extraSMB<0 and thisTime>lastTime:
             speak(textLessSMB+str(extraSMB)+textUnit)
             #call(['espeak', '-v',language[languageID], '-p',pitch, '-s',speed, textLessSMB+str(extraSMB)+textUnit])    # wake up user, also during sleep?
-        howLong = waitNextLoop(loopInterval, thisTime, varFile.suffix, display_tz = get_display_timezone())
+        howLong = waitNextLoop(loopInterval, thisTime, varFile.suffix)
         lastTime = thisTime        
         time.sleep(howLong)
     else:   break                                                                   # on Windows run only once
