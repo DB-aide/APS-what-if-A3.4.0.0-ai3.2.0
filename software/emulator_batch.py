@@ -3,7 +3,8 @@ import sys
 import json
 import time
 import subprocess
-import shutil
+import locale
+import getpass
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 from pathlib import Path
@@ -11,45 +12,56 @@ from emulator_core import parameters_known
 from emulator_core import set_tty
 from emulator_core import get_version_core
 from determine_basal import get_version_determine_basal
+from config import ENABLE_ANDROID_DETECTION             # Also needed for DEFAULT_ENCODING = "utf-8"
 
-# Detect if running in Termux environment
-use_termux = os.environ.get('PREFIX', '').endswith('/data/data/com.termux/files/usr')
+def is_termux() -> bool:
+    # Detect if running in Termux environment
+    return os.path.isdir("/data/data/com.termux")
 
-if sys.platform == "linux":
-    bashrc = os.path.expanduser("~/.bashrc")
-    line = "export PYTHONUTF8=1\n"
+def get_entrypoint_dir() -> Path:
+    try:
+        return Path(sys.argv[0]).resolve().parent
+    except Exception:
+        return Path.cwd()
+    
+def should_debug():
+    user = getpass.getuser()
 
-    with open(bashrc, "a") as f:
-        f.write("\n" + line)
+    if user in ('dries', 'u0_a686', 'u0_a675'):
+        return True
+    if is_termux():
+        return True  # always debug on your mobile
+    if os.getenv("DEBUG") == "1":
+        return True
+    return False
 
-    print("PYTHONUTF8=1 added to ~/.bashrc")
-
-DEBUG = True
+DEBUG = should_debug()
+#DEBUG = True
 
 if DEBUG:
     try:
+        os.environ["PYDEVD_DISABLE_FILE_VALIDATION"] = "1"
         import debugpy
-    except Exception as e:
-        print(f"Debugpy is not installed!\n Install it with this command:\n pip install debugpy\n {e}")
-        """"
-            With Debian 13+
-            source venv/bin/activate
-            python -m pip install debugpy
-        """
-    HOST = "0.0.0.0"
-    PORT = 5678
-    debugpy.listen((HOST, PORT))
-    print("Waiting for VS Code debugger (10s)...")
+        HOST = "0.0.0.0"
+        PORT = 5678
+        debugpy.listen((HOST, PORT))
+        print("Waiting for VS Code debugger (10s)...")
 
-    for _ in range(100):  # 100 × 0.1s = 10s
-        if debugpy.is_client_connected():
-            print("Debugger attached")
-            break
-        time.sleep(0.1)
-    else:
-        print("No debugger attached, continuing normally")
-    debugpy.wait_for_client()
-    print("Debugger attached")
+        for _ in range(100):  # 100 × 0.1s = 10s
+            if debugpy.is_client_connected():
+                print("Debugger attached")
+                break
+            time.sleep(0.1)
+        else:
+            print("No debugger attached, continuing normally")
+        
+    except Exception as e:
+            print(f"Debugpy is not installed!\n Install it with this command:\n pip install debugpy\n {e}")
+            """"
+                With Debian 13+
+                source venv/bin/activate
+                python -m pip install debugpy
+            """
 
 class DummyDroid:
     def dialogCreateAlert(self, title):
@@ -109,7 +121,7 @@ def get_display_timezone():
 
 def speak(text):
     try:
-        if IsAndroid and use_termux:
+        if IsAndroid and is_termux():
             subprocess.run(
                 ["termux-tts-speak", text],
                 check=True,
@@ -303,7 +315,7 @@ def waitNextLoop(loopInterval, arg, varName):
 
     print(
         f' Waiting {int(waitSec)} sec for next loop at '
-        f'{then_local.strftime("%H:%M:%S %Z")};   Variant "{varName}"',
+        f'{then_local.strftime("%H:%M:%S %Z")};  File is: "{varName}"',
         end='\r'
     )
 
@@ -326,16 +338,6 @@ def alarmHours(titel):
         elif pressed_button == 1:           sys.exit()                      # EXIT
     return pick
 
-def sync_android_logs(src: Path, dst: Path):
-    try:
-        dst.mkdir(parents=True, exist_ok=True)
-        for f in src.glob("*"):
-            if f.is_file():
-                shutil.copy2(f, dst / f.name)
-    except PermissionError:
-        # Android freezes → silently fails, mirror remains old
-        pass
-
 ###############################################
 ###    start of main                        ###
 ###############################################
@@ -349,13 +351,11 @@ global echo_msg
 droid = None  # Initialize droid variable for type checking
 
 # try whether we are on Android:
-IsAndroid = False
-# ANDROID_SOURCE 
-vdf_dir = Path('/storage/emulated/0/Documents/aapsLogs')
-TERMUX_MIRROR  = Path.home() / "external-1/Documenten/aapsLogs"
+IsAndroid = ENABLE_ANDROID_DETECTION
 fn = None
+vdf_dir = Path('/storage/emulated/0/Documents/aapsLogs')                    # default for AAPS version: 3.3+
+TERMUX_MIRROR  = str(Path.home()) + "/storage/shared/Documents/aapsLogs/"   # default for Termux AAPS version 3.3+
 test_file = 'AndroidAPS.log'
-
 
                     # AAPS version: 3.3+                        or AAPS 2.8.2                                                        or AAPS 3.0+
 ANDROID_SOURCE = {'/storage/emulated/0/Documents/aapsLogs', '/storage/emulated/0/Android/data/info.nightscout.androidaps/files/', '/storage/emulated/0/AAPS/logs/info.nightscout.androidaps/'}
@@ -367,23 +367,15 @@ for ext in (ANDROID_SOURCE):
             fn = vdf_dir / test_file
             print(f'Found: {Path(ext)}', fn)
 
-if IsAndroid:
-    
-    # try sync first (may fail)
-    # if vdf_dir.exists():
-    #     sync_android_logs(vdf_dir, TERMUX_MIRROR)
-
-    # # werk ALTIJD met mirror
-    # if TERMUX_MIRROR.is_dir():
-    #     vdf_dir = TERMUX_MIRROR
-    #     fn = vdf_dir / test_file
-    #     print("Using Android mirror:", fn)
-    # else:
-    #     raise RuntimeError("No accessible AAPS log folder found")
-    
+if IsAndroid:    
     speed = '150'
     pitch = '33'
-    my_decimal = ','
+    try:
+        locale.setlocale(locale.LC_NUMERIC, "")
+        my_decimal = locale.localeconv()["decimal_point"]
+    except locale.Error:
+        my_decimal = "."  # safe default
+
     #ClearScreenCommand = 'clear'                                           # done in --core.py
     #fn = inh[0]
     myseek  = fn
@@ -397,11 +389,11 @@ if IsAndroid:
     language = {"1":"de+f18", "2":"en+f18"}
     pick = "1"
     pressed_button = "N"
-    while True:                                                             # how the lady speaks ...
+    while True:                                                       # how the lady speaks ...
         pressed_button, pick, done = dialog1('Languages', btns, pressed_button, items, pick)
         #pick = selected_items_indexes[0]
-        if done and pressed_button == "N":     break                           # NEXT
-        elif        pressed_button == "E":     sys.exit()                      # EXIT
+        if done and pressed_button == "N":     break                  # NEXT
+        elif        pressed_button == "E":     sys.exit()             # EXIT
         elif        pressed_button == "T":     speak(items[pick])     # TEST
         #elif        pressed_button == "T":     call(['espeak', '-v', language[pick], '-p',pitch, '-s', speed, items[pick]])     # TEST
         
@@ -441,8 +433,6 @@ if IsAndroid:
     items = {}
     fcount = 1
 
-    #print(vdf_path.exists())
-    #print(list(vdf_path.iterdir()))
     try:
         for varFile in vdf_path.iterdir():
             if varFile.is_file() and varFile.suffix.lower() in ('.dat', '.vdf'):
@@ -451,9 +441,9 @@ if IsAndroid:
     except PermissionError:
         print(f'\nWARNING: no *.dat file or *.vdf file found in\n {vdf_path}')
         print("No permissions for the folder")
-        if use_termux:
+        if is_termux():
             print("Did you run 'termux-setup-storage'?")
-        sys.exit(1)
+        sys.exit()
 
     if not items:
         print(f'\nWARNING: no *.dat file or *.vdf file found in\n {vdf_path}')
@@ -567,8 +557,10 @@ if IsAndroid:
 
     #arg2 = 'Android/.'+''.join(['/'+items[i] for i in selected_items_indexes])# the feature list what to plot
     #arg2+= '/.'                                                            # always decimal "." on Android
-    varyHome= '/storage/emulated/0/Android/data/org.qpython.plus/scripts3/'      # command used to start this script
-    #varyHome = os.path.dirname(varyHome) + '\\'
+    
+    # Platform independent 
+    varyHome= str(get_entrypoint_dir()) + os.sep      # command used to start this script
+    
     m  = '='*66+'\nEcho of software versions used\n'+'-'*66
     m +='\n emulator home directory  ' + varyHome
     #global echo_msg
@@ -610,9 +602,8 @@ else:                                               # we are not on Android
         sys.exit()
 
     # Platform independent
-    varyHome = str(Path(sys.argv[0]).resolve().parent) + os.sep # command used to start this script. 
-    #print (varyHome)
-
+    varyHome= str(get_entrypoint_dir()) + os.sep      # command used to start this script
+    
     m  = '='*66+'\nEcho of software versions used\n'+'-'*66
     m += '\n emulator home directory       ' + varyHome
     #global echo_msg
@@ -701,7 +692,7 @@ while wdhl[0]=='y':                                                             
         if (thisInt in pickLessSMB) and extraSMB<0 and thisTime>lastTime:
             speak(textLessSMB+str(extraSMB)+textUnit)
             #call(['espeak', '-v',language[languageID], '-p',pitch, '-s',speed, textLessSMB+str(extraSMB)+textUnit])    # wake up user, also during sleep?
-        howLong = waitNextLoop(loopInterval, thisTime, varFile.suffix)
+        howLong = waitNextLoop(loopInterval, thisTime, varFile.name)
         lastTime = thisTime        
         time.sleep(howLong)
     else:   break                                                                   # on Windows run only once

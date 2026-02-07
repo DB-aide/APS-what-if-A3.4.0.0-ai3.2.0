@@ -8,13 +8,13 @@
 
 from email.utils import formatdate
 from datetime import timezone
-import  datetime
-import  sys
-import  glob
-import  time
-import  zipfile
-import  copy
-import  re
+import datetime
+import sys
+import glob
+import time
+import zipfile
+import copy
+import re
 import os
 import json
 from pathlib import Path
@@ -115,7 +115,6 @@ def GetUnquotedStr(Curly, Ab, Key):
         Found	= Curly[wo+len(Key)+0:bis]
         #print (str(wo), str(bis))
     return Found 
-
 
 def getReason(reason: str, key: str, upto: str, offset: int):
     """Extract a numeric/expression fragment from `reason`.
@@ -2054,7 +2053,6 @@ def getBgTimeIndex(iFrame):
     return bgIndex
 
 def XYplots(loopCount, head1, head2, entries) :
-    import matplotlib.pyplot as plt
     from matplotlib.animation import FFMpegWriter
     from matplotlib.backends.backend_pdf import PdfPages
     global yStep, yRange, thickness
@@ -2155,12 +2153,16 @@ def XYplots(loopCount, head1, head2, entries) :
     if frameFlow :                                                                      # we need frame for decision flow chart
         flowOffset = maxPlots
         maxPlots += 6
-    plt.rcParams['savefig.dpi'] = 200
-    #lt.rcParams['figure.figsize'] = (9, 18) #6*maxPlots)                               # h,w in inches
-    plt.rcParams['figure.dpi'] = 200
-    plt.rcParams['legend.fontsize'] = 'small'
-    plt.rcParams['legend.facecolor'] = 'grey'
-    plt.rcParams['font.size'] = 8
+    if plt:
+        plt.rcParams['savefig.dpi'] = 200
+        #lt.rcParams['figure.figsize'] = (9, 18) #6*maxPlots)                               # h,w in inches
+        plt.rcParams['figure.dpi'] = 200
+        plt.rcParams['legend.fontsize'] = 'small'
+        plt.rcParams['legend.facecolor'] = 'grey'
+        plt.rcParams['font.size'] = 8
+    else:
+        print("Plot skipped (no matplotlib installed)")
+
     colFav = {'bg':'red', 'ZT':'cyan', 'IOB':'blue', 'COB':'orange', 'UAM':'brown'}
     bbox = dict(boxstyle="round", fc="0.8")
     flowForward = dict(arrowstyle='<|-')                                                # points to current box
@@ -2194,37 +2196,39 @@ def XYplots(loopCount, head1, head2, entries) :
             else:
                 log_msg('Emulation finished; generating graphics page at '+loop_label[iFrame], '\r')
                 #fig, axes = plt.subplots(1, maxPlots, constrained_layout=True, figsize=(9, 15)) #6*maxPlots)  )          
-                fig = plt.figure(constrained_layout=True, figsize=(2.2*max(6,maxPlots), 11))# w, h paper size in inches; double width if no flowchart
-                gs  = fig.add_gridspec(1,maxPlots)                                          # 1 horizontal; 1+2+6 vertical strips
-                fig.set_constrained_layout_pads(w_pad=0., h_pad=0., hspace=0., wspace=0.)   # space to edge and between frames
-                fig.suptitle('\nCompare original "' + fn.as_posix() + '" vs emulation case "' + varLabel + '"\n', weight='bold')    # incl. <CR> for space below Header
-                if frameIns :                                                               # anything related to insulin
-                    axin = fig.add_subplot(gs[0,0])                                         # 1 strip wide
-                    axin.xaxis.label.set_color('blue')
-                    axin.tick_params(axis='x', colors='blue')
-                    axin.set_xlabel('Insulin', weight='bold')
-                    if featured('pred'):
-                        axin.set_ylim(loop_mills[0]+thickness*2+yRange*1.1, loop_mills[0]-thickness*2)    # add thickness*2 so markers fit into plot frame + 10% (45min) space for BG labels
-                    else:
-                        axin.set_ylim(loop_mills[-1]+thickness*2, loop_mills[0]-thickness*2)    # add thickness*2 so markers fit into plot frame
-                    axin.set_yticks(yTicks)
-                    axin.set_yticklabels(yLabels)
+                if plt:
+                    fig = plt.figure(constrained_layout=True, figsize=(2.2*max(6,maxPlots), 11))# w, h paper size in inches; double width if no flowchart
+                    gs  = fig.add_gridspec(1,maxPlots)                                          # 1 horizontal; 1+2+6 vertical strips
+                    fig.set_constrained_layout_pads(w_pad=0., h_pad=0., hspace=0., wspace=0.)   # space to edge and between frames
+                    fig.suptitle('\nCompare original "' + fn.as_posix() + '" vs emulation case "' + varLabel + '"\n', weight='bold')    # incl. <CR> for space below Header
 
-                    if featured('insReq') :
-                        axin.plot(emulInsReq, loop_mills, linestyle='None',  marker='o', color='red',   label='insulin Req, emulated')
-                        axin.plot(origInsReq, loop_mills, linestyle='solid', marker='.', color='orange',label='insulin Req, original')
-                    if featured('maxBolus') :
-                        axin.plot(emulMaxBolus,loop_mills,linestyle='None',  marker='o', color='green', label='maxBolus, emulated')
-                        axin.plot(origMaxBolus,loop_mills,linestyle='solid',             color='green', label='maxBolus, orig')
-                    if featured('SMB') :
-                        axin.plot(emulSMB,    loop_mills, linestyle='None',  marker='o', color='black', label='SMB, emulated')
-                        axin.plot(origSMB,    loop_mills, linestyle='solid', marker='.', color='yellow',label='SMB, original')
-                    if featured('basal') :
-                        axin.barh(y=loop_mills, height=thickness*2.0, width=emulBasal,   color='white', label='tempBasal, emulated', edgecolor='blue')
-                        axin.barh(y=loop_mills, height=thickness*0.8 , width=origBasal,  color='blue',  label='tempBasal, original')
+                    if frameIns :                                                               # anything related to insulin
+                        axin = fig.add_subplot(gs[0,0])                                         # 1 strip wide
+                        axin.xaxis.label.set_color('blue')
+                        axin.tick_params(axis='x', colors='blue')
+                        axin.set_xlabel('Insulin', weight='bold')
+                        if featured('pred'):
+                            axin.set_ylim(loop_mills[0]+thickness*2+yRange*1.1, loop_mills[0]-thickness*2)    # add thickness*2 so markers fit into plot frame + 10% (45min) space for BG labels
+                        else:
+                            axin.set_ylim(loop_mills[-1]+thickness*2, loop_mills[0]-thickness*2)    # add thickness*2 so markers fit into plot frame
+                        axin.set_yticks(yTicks)
+                        axin.set_yticklabels(yLabels)
 
-                    #axin.plot([0,0], [loop_mills[0],loop_mills[-1]], linestyle='dotted', color='black')  # grid line for insulin=0                
-                    axin.legend(loc='lower right')
+                        if featured('insReq') :
+                            axin.plot(emulInsReq, loop_mills, linestyle='None',  marker='o', color='red',   label='insulin Req, emulated')
+                            axin.plot(origInsReq, loop_mills, linestyle='solid', marker='.', color='orange',label='insulin Req, original')
+                        if featured('maxBolus') :
+                            axin.plot(emulMaxBolus,loop_mills,linestyle='None',  marker='o', color='green', label='maxBolus, emulated')
+                            axin.plot(origMaxBolus,loop_mills,linestyle='solid',             color='green', label='maxBolus, orig')
+                        if featured('SMB') :
+                            axin.plot(emulSMB,    loop_mills, linestyle='None',  marker='o', color='black', label='SMB, emulated')
+                            axin.plot(origSMB,    loop_mills, linestyle='solid', marker='.', color='yellow',label='SMB, original')
+                        if featured('basal') :
+                            axin.barh(y=loop_mills, height=thickness*2.0, width=emulBasal,   color='white', label='tempBasal, emulated', edgecolor='blue')
+                            axin.barh(y=loop_mills, height=thickness*0.8 , width=origBasal,  color='blue',  label='tempBasal, original')
+
+                        #axin.plot([0,0], [loop_mills[0],loop_mills[-1]], linestyle='dotted', color='black')  # grid line for insulin=0                
+                        axin.legend(loc='lower right')
                     
                 if frameBG :                                                                # anything related to glucose
                     axbg = fig.add_subplot(gs[0, bgOffset:bgOffset+2])                      # 2 strips wide
@@ -2554,8 +2558,9 @@ def XYplots(loopCount, head1, head2, entries) :
                     log_msg(entries[loop_mills[i]].replace('.', my_decimal))
             if how_to_print!='GUI' and featured('PDF') and not featured('pred') and maxPlots>0:
                 #print('batch mode with PDF')
-                plt.show()     # otherwise conflict with root.mainloop() in tkinter
-            plt.close()                                     # end of current page
+                if plt:
+                    plt.show()     # otherwise conflict with root.mainloop() in tkinter
+                    plt.close()                                     # end of current page
         #pdf.close()                                        # not needed due to "with ..." method triggered above
     pass
 
